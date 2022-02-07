@@ -54,8 +54,6 @@ def calculate_ema(data, days, smoothing=2):
         ema.append((price * (smoothing / (1 + days))) + ema[-1] * (1 - (smoothing / (1 + days))))
     return ema
 
-
-
 def calc_rsi(close, ema_lookback = 14):
     ret = close.diff()
     up = []
@@ -120,7 +118,7 @@ market_hours = [datetime.strptime(start,"%H:%M:%S").time(), datetime.strptime(En
 nq = nq.reset_index()
 nq['Date'] = nq['Datetime'].apply(lambda x:x.tz_convert("US/Pacific").date())
 nq['Datetime'] = nq['Datetime'].apply(lambda x:x.tz_convert("US/Pacific").time())
-# nq = nq[nq['Datetime'] > market_hours[0]][nq['Datetime'] < market_hours[1]]
+nq = nq[nq['Datetime'] > market_hours[0]][nq['Datetime'] < market_hours[1]]
 nq['Datetime'] = nq[['Datetime', 'Date']].apply(lambda x:pd.to_datetime(x[1].strftime("%m/%d/%Y") + " " + x[0].strftime("%H:%M:%S")), axis = 1)
 nq = nq.set_index('Datetime')
 #print(nq)
@@ -152,7 +150,6 @@ number_of_contracts = 2
 handle_value = 2
 
 trades = []
-
 
 
 def implement_rsi_strategy(ema_prices, date_indices, prices, rsi, rsi_lower_bound, rsi_upper_bound):
