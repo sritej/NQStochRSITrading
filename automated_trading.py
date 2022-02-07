@@ -22,16 +22,39 @@ max_loss = 50
 total_profit = 0
 total_loss = 0
 
+# To control whole of stop loss and profit taking - Master flag
+have_stop_loss = False
+
+# To control only profit taking, have_stop_loss flag must still be True for this.
+take_profit_flag = False
+
+# To Control 200 EMA check when taking Trades.
+# Enabling this will allow taking the following trades only:
+##      Only BUY when the PRICE IS ABOVE 200 EMA and OVERSOLD
+##      Only SELL when the PRICE IS BELOW 200 EMA and OVERBOUGHT
+enable_ema_check = False
+
 def get_historical_data(symbols, interval = None, start_date = None, end_date = None ):
     #api_key = open(r'api_key.txt')
     #api_url = f'https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval=5min&apikey=B1070L97KPM1MSGC&outputsize=full'
-    df = yfinance.download(tickers = symbols, period = "2d", interval = "1m")
+    df = yfinance.download(tickers = symbols, period = "1d", interval = "2m")
     #df = yfinance.download(tickers = symbols, start="2022-02-01", end="2022-02-02", interval = "1m")
     return df
 
 def ema(data, period = 20):
     #return data.ewm(span=period, adjust=False).mean()
     return data.ewm(com=period, adjust=False).mean()
+
+def ema_span(data, period = 20):
+    return data.ewm(span=period, adjust=True).mean()
+
+def calculate_ema(data, days, smoothing=2):
+    ema = [sum(data[:days]) / days]
+    for price in data[days:]:
+        ema.append((price * (smoothing / (1 + days))) + ema[-1] * (1 - (smoothing / (1 + days))))
+    return ema
+
+
 
 def calc_rsi(close, ema_lookback = 14):
     ret = close.diff()
@@ -87,6 +110,9 @@ nq['rsi_20'] = get_rsi(nq['Close'], 14)
 nq['stock_rsi_20'] = stock_rsi(nq['Close'], 14)
 nq = nq.dropna()
 
+#print(ema(nq['Close'], 200), '200 ema df')
+#print(calculate_ema(nq['Close'], 200), '200 ema manual')
+
 # Converting nq timings to pacific and during market hours
 start="06:30:00"
 End="13:00:00"
@@ -94,7 +120,7 @@ market_hours = [datetime.strptime(start,"%H:%M:%S").time(), datetime.strptime(En
 nq = nq.reset_index()
 nq['Date'] = nq['Datetime'].apply(lambda x:x.tz_convert("US/Pacific").date())
 nq['Datetime'] = nq['Datetime'].apply(lambda x:x.tz_convert("US/Pacific").time())
-nq = nq[nq['Datetime'] > market_hours[0]][nq['Datetime'] < market_hours[1]]
+# nq = nq[nq['Datetime'] > market_hours[0]][nq['Datetime'] < market_hours[1]]
 nq['Datetime'] = nq[['Datetime', 'Date']].apply(lambda x:pd.to_datetime(x[1].strftime("%m/%d/%Y") + " " + x[0].strftime("%H:%M:%S")), axis = 1)
 nq = nq.set_index('Datetime')
 #print(nq)
@@ -129,7 +155,7 @@ trades = []
 
 
 
-def implement_rsi_strategy(date_indices, prices, rsi, rsi_lower_bound, rsi_upper_bound):
+def implement_rsi_strategy(ema_prices, date_indices, prices, rsi, rsi_lower_bound, rsi_upper_bound):
     buy_price = []
     sell_price = []
     rsi_signal = []
@@ -146,7 +172,9 @@ def implement_rsi_strategy(date_indices, prices, rsi, rsi_lower_bound, rsi_upper
     for i in range(len(rsi)):
         if rsi[i-1] < rsi_lower_bound and rsi[i] > rsi_lower_bound:
             # if buy signal received for the first time and there are no long positions open
-            if signal != 1 and relative_signal <= 0:
+            # buy only when oversold and is above 200 ema
+            if signal != 1 and relative_signal <= 0 and (True if not enable_ema_check else enable_ema_check and ema_prices[i] < prices[i]):
+            #if signal != 1 and relative_signal <= 0:
                 buy_price.append(prices[i])
                 sell_price.append(np.nan)
                 signal = 1
@@ -178,7 +206,8 @@ def implement_rsi_strategy(date_indices, prices, rsi, rsi_lower_bound, rsi_upper
                 rsi_signal.append(relative_signal)
         elif rsi[i-1] > rsi_upper_bound and rsi[i] < rsi_upper_bound:
             # if sell signal received for the first time and there are no short positions open
-            if signal != -1 and relative_signal >= 0:
+            if signal != -1 and relative_signal >= 0 and (True if not enable_ema_check else enable_ema_check and ema_prices[i] > prices[i]):
+            #if signal != -1 and relative_signal >= 0:
                 buy_price.append(np.nan)
                 sell_price.append(prices[i])
                 signal = -1
@@ -208,7 +237,7 @@ def implement_rsi_strategy(date_indices, prices, rsi, rsi_lower_bound, rsi_upper
                 sell_price.append(np.nan)
                 size_open.append([date_indices[i], ''])
                 rsi_signal.append(relative_signal)
-        else:
+        elif have_stop_loss:
             # if neither a buy signal nor a sell signal
             # Check for number of handles up or down. i.e max_draw_down and max_pull_up
             # Close 1 position if max_pull_up == 5 handles achieved or close 2 positions if max_pull_up == 15
@@ -225,7 +254,7 @@ def implement_rsi_strategy(date_indices, prices, rsi, rsi_lower_bound, rsi_upper
                     if max_draw_down >= 15:
                         buy_price.append(np.nan)
                         sell_price.append(prices[i])
-                        signal = -1
+                        signal = 0
 
                         # Since we are LONG and got a SELL signal and closing all. Update relative_signal = 0. i.e no more open positions
                         relative_signal = 0
@@ -248,12 +277,13 @@ def implement_rsi_strategy(date_indices, prices, rsi, rsi_lower_bound, rsi_upper
                 elif max_pull_up < prices[i] - bp:
                     max_pull_up = prices[i] - bp
                     # Close all positions if we are more than 10 handles
-                    if max_pull_up >= 10:
+                    if max_pull_up >= 10 and take_profit_flag:
+                        print("inside partial 1")
                         size_open.append([date_indices[i], 'FULL'])
                         trades.append(['LONG', buy_date, bp, date_indices[i], prices[i], max_draw_down, max_pull_up, prices[i] - bp, 'FULL','LIMIT'])
                         buy_price.append(np.nan)
                         sell_price.append(prices[i])
-                        signal = -1
+                        signal = 0
                         # Re-calculate the relative_signal to reflect how many open positions
                         relative_signal = 0
                         rsi_signal.append(relative_signal)
@@ -265,7 +295,8 @@ def implement_rsi_strategy(date_indices, prices, rsi, rsi_lower_bound, rsi_upper
                         max_pull_up = 0
                     # Close 1 position if we reached 5 handles. YAYYY! its a profit
                     # This is to be executed only when we have 2 positions opened
-                    elif max_pull_up >= 5 and relative_signal >1:
+                    elif max_pull_up >= 5 and relative_signal >1 and take_profit_flag:
+                        print("inside partial 2")
                         size_open.append([date_indices[i], 'PARTIAL'])
                         trades.append(['LONG', buy_date, bp, date_indices[i], prices[i], max_draw_down, max_pull_up, prices[i] - bp, 'PARTIAL','LIMIT'])
                         buy_price.append(np.nan)
@@ -292,12 +323,13 @@ def implement_rsi_strategy(date_indices, prices, rsi, rsi_lower_bound, rsi_upper
                 if max_pull_up <  sp - prices[i]:
                     max_pull_up = sp - prices[i]
                     # Close all positions if we are more than 10 handles
-                    if max_pull_up >= 10:
+                    if max_pull_up >= 10 and take_profit_flag:
+                        print("inside partial 3")
                         size_open.append([date_indices[i], 'FULL'])
                         trades.append(['SHORT', sell_date, sp, date_indices[i], prices[i], max_draw_down, max_pull_up, sp - prices[i], 'FULL','LIMIT'])
                         buy_price.append(prices[i])
                         sell_price.append(np.nan)
-                        signal = 1
+                        signal = 0
                         # Re-calculate the relative_signal to reflect how many open positions
                         relative_signal = 0
                         rsi_signal.append(relative_signal)
@@ -309,7 +341,8 @@ def implement_rsi_strategy(date_indices, prices, rsi, rsi_lower_bound, rsi_upper
                         max_pull_up = 0
                     # Close 1 position if we reached 5 handles. YAYYY! its a profit
                     # This is to be executed only when we have 2 positions opened
-                    elif max_pull_up >= 5 and relative_signal < 1:
+                    elif max_pull_up >= 5 and relative_signal < 1 and take_profit_flag:
+                        print("inside partial 4")
                         size_open.append([date_indices[i], 'PARTIAL'])
                         trades.append(['SHORT', sell_date, sp, date_indices[i], prices[i], max_draw_down, max_pull_up, sp - prices[i], 'PARTIAL','LIMIT'])
                         buy_price.append(prices[i])
@@ -332,7 +365,7 @@ def implement_rsi_strategy(date_indices, prices, rsi, rsi_lower_bound, rsi_upper
                         buy_price.append(prices[i])
                         sell_price.append(np.nan)
 
-                        signal = 1
+                        signal = 0
                         # Since we are SHORT and got a BUY signal and closing all. Update relative_signal = 0. i.e no more open positions
                         relative_signal = 0
                         rsi_signal.append(relative_signal)
@@ -363,12 +396,21 @@ def implement_rsi_strategy(date_indices, prices, rsi, rsi_lower_bound, rsi_upper
                 buy_price.append(np.nan)
                 sell_price.append(np.nan)
                 rsi_signal.append(relative_signal)
+        else:
+            size_open.append([date_indices[i], ''])
+            #size_open.append([date_indices[i].tz_localize('UTC'), ''])
+            buy_price.append(np.nan)
+            sell_price.append(np.nan)
+            rsi_signal.append(relative_signal)
 
     return buy_price, sell_price, rsi_signal, size_open
 
 # Generate buy price/sell price/rsi array
 #buy_price, sell_price, rsi_signal = implement_rsi_strategy(nq.index, nq['Close'], nq['rsi_20'], rsi_lower_bound, rsi_upper_bound)
-buy_price, sell_price, rsi_signal, size_open = implement_rsi_strategy(nq.index, nq['Close'], nq['stock_rsi_20'], stoch_rsi_lower_bound, stoch_rsi_upper_bound)
+ema_200 = ema_span(nq['Close'], 100)
+ema_df = pd.DataFrame(ema_200).rename(columns = {'Close':'ema_200'}).set_index(nq.index)
+print(ema_df)
+buy_price, sell_price, rsi_signal, size_open = implement_rsi_strategy(ema_df['ema_200'], nq.index, nq['Close'], nq['stock_rsi_20'], stoch_rsi_lower_bound, stoch_rsi_upper_bound)
 
 size_open_df = pd.DataFrame(size_open).rename(columns = {0:'Datetime',1:'Trade Style'})
 size_open_df = size_open_df.set_index('Datetime')
@@ -377,6 +419,7 @@ ax1 = plt.subplot2grid((15,1), (0,0), rowspan = 10, colspan = 1)
 # ax2 = plt.subplot2grid((15,1), (5,0), rowspan = 4, colspan = 1)
 ax3 = plt.subplot2grid((15,1), (11,0), rowspan = 7, colspan = 1)
 ax1.plot(nq['Close'], linewidth = 2.5, color = 'skyblue', label = 'NQ')
+ax1.plot(ema_df['ema_200'], linewidth = 2.5, color = 'yellow', label = 'ema_200')
 ax1.plot(size_open_df.index, buy_price, marker = '^', markersize = 10, color = 'green', label = 'BUY SIGNAL')
 ax1.plot(size_open_df.index, sell_price, marker = 'v', markersize = 10, color = 'r', label = 'SELL SIGNAL')
 ax1.set_title('NQ RSI TRADE SIGNALS')
