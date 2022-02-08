@@ -37,8 +37,8 @@ enable_ema_check = False
 def get_historical_data(symbols, interval = None, start_date = None, end_date = None ):
     #api_key = open(r'api_key.txt')
     #api_url = f'https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval=5min&apikey=B1070L97KPM1MSGC&outputsize=full'
-    df = yfinance.download(tickers = symbols, period = "1d", interval = "2m")
-    #df = yfinance.download(tickers = symbols, start="2022-02-01", end="2022-02-02", interval = "1m")
+    df = yfinance.download(tickers = symbols, period = "30d", interval = "2m")
+    #df = yfinance.download(tickers = symbols, start="2022-02-04", end="2022-02-08", interval = "1m")
     return df
 
 def ema(data, period = 20):
@@ -107,6 +107,7 @@ nq = get_historical_data("NQ=F")
 nq['rsi_20'] = get_rsi(nq['Close'], 14)
 nq['stock_rsi_20'] = stock_rsi(nq['Close'], 14)
 nq = nq.dropna()
+#print(nq)
 
 #print(ema(nq['Close'], 200), '200 ema df')
 #print(calculate_ema(nq['Close'], 200), '200 ema manual')
@@ -141,7 +142,7 @@ ax3.axhline(80, linestyle = '--', linewidth = 1.5, color = 'grey')
 ax3.set_title('NQ Stochastic RSI')
 plt.show()
 
-investment_value = 5000
+initial_value = 5000
 account_min = 2000
 stop_loss = 15
 take_profit = 5
@@ -234,7 +235,7 @@ def implement_rsi_strategy(ema_prices, date_indices, prices, rsi, rsi_lower_boun
                 sell_price.append(np.nan)
                 size_open.append([date_indices[i], ''])
                 rsi_signal.append(relative_signal)
-        elif have_stop_loss:
+        else:
             # if neither a buy signal nor a sell signal
             # Check for number of handles up or down. i.e max_draw_down and max_pull_up
             # Close 1 position if max_pull_up == 5 handles achieved or close 2 positions if max_pull_up == 15
@@ -248,7 +249,7 @@ def implement_rsi_strategy(ema_prices, date_indices, prices, rsi, rsi_lower_boun
                     max_draw_down = bp - prices[i]
                     # If max_draw_down >= 15 then close 2 positions.
                     # Since we are LONG, now we need to sell and update the signal to -1 (Overrides the values given by rsi)
-                    if max_draw_down >= 15:
+                    if max_draw_down >= 15 and have_stop_loss:
                         buy_price.append(np.nan)
                         sell_price.append(prices[i])
                         signal = 0
@@ -274,8 +275,7 @@ def implement_rsi_strategy(ema_prices, date_indices, prices, rsi, rsi_lower_boun
                 elif max_pull_up < prices[i] - bp:
                     max_pull_up = prices[i] - bp
                     # Close all positions if we are more than 10 handles
-                    if max_pull_up >= 10 and take_profit_flag:
-                        print("inside partial 1")
+                    if max_pull_up >= 10 and take_profit_flag and have_stop_loss:
                         size_open.append([date_indices[i], 'FULL'])
                         trades.append(['LONG', buy_date, bp, date_indices[i], prices[i], max_draw_down, max_pull_up, prices[i] - bp, 'FULL','LIMIT'])
                         buy_price.append(np.nan)
@@ -292,8 +292,7 @@ def implement_rsi_strategy(ema_prices, date_indices, prices, rsi, rsi_lower_boun
                         max_pull_up = 0
                     # Close 1 position if we reached 5 handles. YAYYY! its a profit
                     # This is to be executed only when we have 2 positions opened
-                    elif max_pull_up >= 5 and relative_signal >1 and take_profit_flag:
-                        print("inside partial 2")
+                    elif max_pull_up >= 5 and relative_signal >1 and take_profit_flag and have_stop_loss:
                         size_open.append([date_indices[i], 'PARTIAL'])
                         trades.append(['LONG', buy_date, bp, date_indices[i], prices[i], max_draw_down, max_pull_up, prices[i] - bp, 'PARTIAL','LIMIT'])
                         buy_price.append(np.nan)
@@ -320,8 +319,7 @@ def implement_rsi_strategy(ema_prices, date_indices, prices, rsi, rsi_lower_boun
                 if max_pull_up <  sp - prices[i]:
                     max_pull_up = sp - prices[i]
                     # Close all positions if we are more than 10 handles
-                    if max_pull_up >= 10 and take_profit_flag:
-                        print("inside partial 3")
+                    if max_pull_up >= 10 and take_profit_flag and have_stop_loss:
                         size_open.append([date_indices[i], 'FULL'])
                         trades.append(['SHORT', sell_date, sp, date_indices[i], prices[i], max_draw_down, max_pull_up, sp - prices[i], 'FULL','LIMIT'])
                         buy_price.append(prices[i])
@@ -338,8 +336,7 @@ def implement_rsi_strategy(ema_prices, date_indices, prices, rsi, rsi_lower_boun
                         max_pull_up = 0
                     # Close 1 position if we reached 5 handles. YAYYY! its a profit
                     # This is to be executed only when we have 2 positions opened
-                    elif max_pull_up >= 5 and relative_signal < 1 and take_profit_flag:
-                        print("inside partial 4")
+                    elif max_pull_up >= 5 and relative_signal < 1 and take_profit_flag and have_stop_loss:
                         size_open.append([date_indices[i], 'PARTIAL'])
                         trades.append(['SHORT', sell_date, sp, date_indices[i], prices[i], max_draw_down, max_pull_up, sp - prices[i], 'PARTIAL','LIMIT'])
                         buy_price.append(prices[i])
@@ -358,7 +355,7 @@ def implement_rsi_strategy(ema_prices, date_indices, prices, rsi, rsi_lower_boun
                     max_draw_down = prices[i] - sp
                     # If max_draw_down >= 15 then close 2 positions.
                     # Since we are SHORT, now we need to buy and update the signal to 1 (Overrides the values given by rsi)
-                    if max_draw_down >= 15:
+                    if max_draw_down >= 15 and have_stop_loss:
                         buy_price.append(prices[i])
                         sell_price.append(np.nan)
 
@@ -393,12 +390,12 @@ def implement_rsi_strategy(ema_prices, date_indices, prices, rsi, rsi_lower_boun
                 buy_price.append(np.nan)
                 sell_price.append(np.nan)
                 rsi_signal.append(relative_signal)
-        else:
-            size_open.append([date_indices[i], ''])
-            #size_open.append([date_indices[i].tz_localize('UTC'), ''])
-            buy_price.append(np.nan)
-            sell_price.append(np.nan)
-            rsi_signal.append(relative_signal)
+        # else:
+        #     size_open.append([date_indices[i], ''])
+        #     #size_open.append([date_indices[i].tz_localize('UTC'), ''])
+        #     buy_price.append(np.nan)
+        #     sell_price.append(np.nan)
+        #     rsi_signal.append(relative_signal)
 
     return buy_price, sell_price, rsi_signal, size_open
 
@@ -447,7 +444,10 @@ close_price = nq['Close']
 rsi_signal = pd.DataFrame(rsi_signal).rename(columns = {0:'rsi_signal'}).set_index(size_open_df.index)
 # position = pd.DataFrame(position).rename(columns = {0:'rsi_position'}).set_index(size_open_df.index)
 trades_df = pd.DataFrame(trades).rename(columns = {0:'Position',1:'Open Date', 2:'Open',3:'Close Date', 4:'Close',5:'Max Draw Down',6:'Max Pull Up', 7:'Profit/Loss', 8:'Trade Style',9:'Signal Type'})
+trades_df['Total Gain'] = trades_df['Profit/Loss'].cumsum().round(2)
+trades_df['HighValue'] = trades_df['Total Gain'].cummax()
 
+trades_df['Drawdown'] = trades_df['Total Gain'] - trades_df['HighValue']
 print(trades_df)
 # frames = [close_price, stoch_rsi, rsi_signal]
 # strategy = pd.concat(frames, join = 'inner', axis = 1)
@@ -461,14 +461,10 @@ for i in range(len(nq_ret)):
 
 rsi_strategy_ret_df = pd.DataFrame(rsi_strategy_ret).rename(columns = {0:'rsi_returns'})
 
-# rsi_investment_ret = []
-#
-# for i in range(len(rsi_strategy_ret_df['rsi_returns'])):
-#     returns = number_of_contracts*rsi_strategy_ret_df['rsi_returns'][i]
-#     rsi_investment_ret.append(returns)
-
-# rsi_investment_ret_df = pd.DataFrame(rsi_investment_ret).rename(columns = {0:'investment_returns'})
-total_investment_ret = round(sum(rsi_strategy_ret_df['rsi_returns']), 2)
-profit_percentage = floor((total_investment_ret/investment_value)*100)
+total_ret = round(sum(rsi_strategy_ret_df['rsi_returns']), 2)
+profit_percentage = floor((total_ret/initial_value)*100)
+print(cl('Total Max Draw Down per trade: {}'.format(trades_df["Max Draw Down"].max(), attrs = ['bold'])))
+print(cl('Total Max Continuous Draw Down : {}'.format(trades_df["Drawdown"].min(), attrs = ['bold'])))
+print(cl('Total Max Draw account Down : {}'.format(trades_df["Total Gain"].min(), attrs = ['bold'])))
 print(cl('Profit gained from the RSI strategy by investing $5000 in NQ : {}'.format(total_investment_ret), attrs = ['bold']))
 print(cl('Profit percentage of the RSI strategy : {}%'.format(profit_percentage), attrs = ['bold']))
