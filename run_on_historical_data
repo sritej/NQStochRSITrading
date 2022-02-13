@@ -1,0 +1,17 @@
+for i in {0..30}
+do
+	k=`expr $i - 1` 
+	date_to_run_start=`date -v -"$i"d +"%F"`
+	if [[ $i -eq 0 ]]
+	then
+		date_to_run_end=`date -v +1d +"%F"`
+	else	
+		date_to_run_end=`date -v -"$k"d +"%F"`
+	fi
+	python3 automated_trading.py FALSE	FALSE	FALSE $date_to_run_start  $date_to_run_end
+	python3 automated_trading.py FALSE	FALSE	TRUE $date_to_run_start  $date_to_run_end
+	python3 automated_trading.py TRUE	FALSE	FALSEE $date_to_run_start  $date_to_run_end
+	python3 automated_trading.py TRUE	FALSE	TRUE $date_to_run_start  $date_to_run_end
+	python3 automated_trading.py TRUE	TRUE	FALSE $date_to_run_start  $date_to_run_end
+	python3 automated_trading.py TRUE	TRUE	TRUE $date_to_run_start  $date_to_run_end
+done
