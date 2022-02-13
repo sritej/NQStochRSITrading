@@ -1,12 +1,14 @@
-for i in {0..30}
+for i in $(seq "$1")
 do
-	k=`expr $i - 1` 
-	date_to_run_start=`date -v -"$i"d +"%F"`
-	if [[ $i -eq 0 ]]
+	echo $i
+	k=`expr $i - 1`
+	j=`expr $i - 2`
+	date_to_run_start=`date -v -"$k"d +"%F"`
+	if [[ $i -eq 1 ]]
 	then
 		date_to_run_end=`date -v +1d +"%F"`
-	else	
-		date_to_run_end=`date -v -"$k"d +"%F"`
+	else
+		date_to_run_end=`date -v -"$j"d +"%F"`
 	fi
 	python3 automated_trading.py FALSE	FALSE	FALSE $date_to_run_start  $date_to_run_end
 	python3 automated_trading.py FALSE	FALSE	TRUE $date_to_run_start  $date_to_run_end
